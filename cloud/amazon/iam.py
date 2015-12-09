@@ -53,6 +53,16 @@ options:
       - When creating or updating, specify the desired path of the resource. If state is present, it will replace the current path to match what is passed in when they do not match.
     required: false
     default: "/"
+  assume_role_policy_document:
+    description:
+      - The path to the properly json formatted policy file that grants an entity permission to assume a role (mutually exclusive with C(assume_role_policy_json)
+    required: false
+    default: null
+  assume_role_policy_json:
+    description:
+      - A properly json formatted policy as string (mutually exclusive with C(assume_role_policy_document) that grants an entity permission to assume a role.
+    required: false
+    default: null
   access_key_state:
     description:
       - When type is user, it creates, removes, deactivates or activates a user's access key(s). Note that actions apply only to keys specified.
@@ -443,13 +453,14 @@ def update_group(module=None, iam=None, name=None, new_name=None, new_path=None)
     return changed, name, new_path, current_group_path
 
 
-def create_role(module, iam, name, path, role_list, prof_list):
+def create_role(module, iam, name, path, role_list, prof_list, assume_role_policy):
     changed = False
     try:
         if name not in role_list:
             changed = True
             iam.create_role(
-                name, path=path).create_role_response.create_role_result.role.role_name
+                name, assume_role_policy_document=assume_role_policy,
+                path=path).create_role_response.create_role_result.role.role_name
 
             if name not in prof_list:
                 iam.create_instance_profile(name, path=path)
@@ -525,7 +536,9 @@ def main():
         name=dict(default=None, required=False),
         new_name=dict(default=None, required=False),
         path=dict(default='/', required=False),
-        new_path=dict(default=None, required=False)
+        new_path=dict(default=None, required=False),
+        assume_role_policy_document=dict(default=None, required=False),
+        assume_role_policy_json=dict(default=None, required=False)
     )
     )
 
@@ -548,6 +561,18 @@ def main():
     new_path = module.params.get('new_path')
     key_count = module.params.get('key_count')
     key_state = module.params.get('access_key_state')
+
+    if module.params.get('assume_role_policy_document') != None:
+        with open(module.params.get('assume_role_policy_document'), 'r') as json_data:
+            arpdoc = json.load(json_data)
+    elif module.params.get('assume_role_policy_json') != None:
+        try:
+            arpdoc = json.loads(module.params.get('assume_role_policy_json'))
+        except Exception as e:
+            module.fail_json(msg=str(e) + '\n' + module.params.get('assume_role_policy_json'))
+    else:
+        arpdoc = None
+
     if key_state:
         key_state = key_state.lower()
         if any([n in key_state for n in ['active', 'inactive']]) and not key_ids:
@@ -721,7 +746,7 @@ def main():
         role_list = []
         if state == 'present':
             changed, role_list = create_role(
-                module, iam, name, path, orig_role_list, orig_prof_list)
+                module, iam, name, path, orig_role_list, orig_prof_list, arpdoc)
         elif state == 'absent':
             changed, role_list = delete_role(
                 module, iam, name, orig_role_list, orig_prof_list)
